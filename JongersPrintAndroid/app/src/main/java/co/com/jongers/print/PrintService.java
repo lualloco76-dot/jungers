@@ -50,7 +50,7 @@ public final class PrintService extends Service {
         Notification n=new Notification.Builder(this,CHANNEL)
                 .setContentTitle("Jonger's · Impresión automática")
                 .setContentText("Esperando comandas de FuegoPOS")
-                .setSmallIcon(android.R.drawable.ic_menu_print).setOngoing(true).setContentIntent(open).build();
+                .setSmallIcon(android.R.drawable.ic_menu_info_details).setOngoing(true).setContentIntent(open).build();
         if(Build.VERSION.SDK_INT>=34)startForeground(513,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         else startForeground(513,n);
     }
