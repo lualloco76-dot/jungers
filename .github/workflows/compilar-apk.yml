@@ -1,0 +1,53 @@
+name: Compilar Jongers Print Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/compilar-apk.yml'
+      - 'JongersPrintAndroid/**'
+
+permissions:
+  contents: read
+
+jobs:
+  generar-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Descargar el proyecto
+        uses: actions/checkout@v4
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar plataforma Android
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Compilar APK de pruebas
+        run: gradle --no-daemon --stacktrace -p JongersPrintAndroid :app:assembleDebug
+
+      - name: Verificar APK
+        run: |
+          test -s JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk | tail -n 1
+
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jongers-Print-Android-APK
+          path: JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
