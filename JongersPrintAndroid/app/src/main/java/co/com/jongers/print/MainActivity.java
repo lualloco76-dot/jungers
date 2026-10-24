@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.text.InputFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
@@ -27,7 +29,9 @@ import java.util.List;
 public final class MainActivity extends Activity {
     private static final String USB_PERMISSION="co.com.jongers.print.USB_PERMISSION";
     private final int BG=Color.rgb(15,20,30),PANEL=Color.rgb(29,36,48),YELLOW=Color.rgb(255,203,50);
-    private EditText tokenField;private TextView status,devices;
+    private TextView status,devices;
+    private LinearLayout root;
+    private ScrollView screen;
     private final BroadcastReceiver usbPermissionReceiver=new BroadcastReceiver(){
         @Override public void onReceive(Context c,Intent intent){
             if(!USB_PERMISSION.equals(intent.getAction()))return;
@@ -39,45 +43,96 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(usbPermissionReceiver,new IntentFilter(USB_PERMISSION),Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(usbPermissionReceiver,new IntentFilter(USB_PERMISSION));
-        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(BG);
-        LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);main.setPadding(20,28,20,30);scroll.addView(main);
-        label(main,"JONGER'S",30,YELLOW,true);
-        label(main,"AGENTE DE IMPRESIÓN ANDROID · ESC/POS",14,Color.WHITE,true);
-        label(main,"Impresión automática: Bluetooth clásico, USB OTG y Wi-Fi/Ethernet. Mantén activo este equipo durante el servicio.",14,0xffb8c2d3,false);
-        space(main,16);
-        label(main,"CREDENCIAL DEL EQUIPO",14,YELLOW,true);
-        tokenField=new EditText(this);tokenField.setSingleLine(true);
-        tokenField.setTextColor(Color.WHITE);tokenField.setHintTextColor(0xff8995a8);tokenField.setHint("Pega los 64 caracteres generados en FuegoPOS");
-        tokenField.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        tokenField.setBackgroundColor(PANEL);tokenField.setPadding(12,12,12,12);main.addView(tokenField);
-        button(main,"Guardar clave de esta terminal",()->{
-            try{SecureStore.save(this,tokenField.getText().toString().trim());tokenField.setText("");toast("Credencial guardada de manera cifrada");refresh();}
-            catch(Exception ex){message("No se guardó",ex.getMessage());}
-        });
-        button(main,"Solicitar permisos Bluetooth y avisos",this::askPermissions);
-        button(main,"Elegir impresora Bluetooth emparejada",this::chooseBluetooth);
-        button(main,"Autorizar impresoras USB conectadas",this::allowUsb);
-        button(main,"Agregar impresora Wi-Fi (IP/puerto)",this::addWifi);
-        space(main,15);
-        button(main,"INICIAR IMPRESIÓN AUTOMÁTICA",()->{
+        screen=new ScrollView(this);screen.setFillViewport(true);screen.setBackgroundColor(BG);
+        root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(19),dp(23),dp(19),dp(35));
+        screen.addView(root);setContentView(screen);
+        showSteps();
+    }
+    private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density+0.5f);}
+    private GradientDrawable panelDrawable(int color,int radius){
+        GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;
+    }
+    private LinearLayout card(){
+        LinearLayout c=new LinearLayout(this);c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(18),dp(16),dp(18),dp(18));c.setBackground(panelDrawable(PANEL,18));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,dp(11),0,dp(4));root.addView(c,lp);return c;
+    }
+    private void detail(LinearLayout parent,String txt){
+        TextView v=label(parent,txt,14,0xffb8c2d3,false);v.setLineSpacing(dp(3),1f);
+    }
+    private void stepTitle(LinearLayout parent,String title){
+        TextView v=label(parent,title,19,Color.WHITE,true);v.setPadding(0,dp(5),0,dp(7));
+    }
+    private boolean paired(){
+        try{return !SecureStore.read(this).isEmpty();}
+        catch(Exception e){return false;}
+    }
+    private void showSteps(){
+        root.removeAllViews();status=null;devices=null;
+        label(root,"JONGER'S",33,YELLOW,true);
+        label(root,"PRINT  ·  IMPRESION AUTOMATICA",13,0xffd4dbe6,true);
+        detail(root,"Conecta este Android a las comandas de cocina, sin claves largas ni configuraciones técnicas.");
+        boolean ready=paired();
+        LinearLayout intro=card();
+        stepTitle(intro,ready?"EQUIPO VINCULADO":"1  ·  VINCULAR ANDROID");
+        if(!ready){
+            detail(intro,"En FuegoPOS abre Equipos e impresoras, registra el Android y pulsa Generar codigo. Es valido durante 10 minutos.");
+            EditText code=new EditText(this);code.setSingleLine(true);code.setTextSize(23);
+            code.setTextColor(Color.WHITE);code.setHintTextColor(0xff7c8b9e);
+            code.setHint("Codigo de 10 digitos");code.setInputType(InputType.TYPE_CLASS_NUMBER);
+            code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
+            code.setPadding(dp(14),dp(11),dp(14),dp(11));code.setBackground(panelDrawable(BG,10));
+            intro.addView(code,new LinearLayout.LayoutParams(-1,dp(56)));
+            button(intro,"CONECTAR ESTE ANDROID",()->{
+                String value=code.getText().toString().trim();
+                if(!value.matches("[0-9]{10}")){message("Codigo incompleto","Escribe los 10 digitos mostrados en FuegoPOS.");return;}
+                code.setEnabled(false);
+                new Thread(()->{
+                    try{
+                        org.json.JSONObject response=PrintService.call("",PrintService.map("action","pair","code",value));
+                        if(!response.optBoolean("ok",false))throw new Exception(response.optString("error","No se pudo vincular"));
+                        SecureStore.save(this,response.getString("token"));
+                        String name=response.optString("terminal_name","Android Jonger's");
+                        runOnUiThread(()->{toast("Vinculado: "+name);showSteps();});
+                    }catch(Exception ex){runOnUiThread(()->{code.setEnabled(true);message("No se pudo conectar",ex.getMessage());});}
+                },"jongers-pair").start();
+            });
+            detail(intro,"El codigo se utiliza una sola vez. La aplicacion guarda la autorizacion de manera cifrada.");
+            label(root,"Despues de conectar apareceran los pasos de impresora y prueba.",13,0xff8290a4,false);
+            return;
+        }
+        detail(intro,"Este dispositivo ya esta autorizado. No necesitas escribir otra clave al imprimir.");
+        LinearLayout printer=card();
+        stepTitle(printer,"2  ·  ELEGIR IMPRESORA");
+        detail(printer,"Primero empareja la impresora desde Ajustes Bluetooth de Android. Despues seleccionala aqui.");
+        button(printer,"BUSCAR IMPRESORA BLUETOOTH",this::chooseBluetooth);
+        button(printer,"Usar impresora USB",this::allowUsb);
+        button(printer,"Usar impresora Wi-Fi",this::addWifi);
+        devices=label(printer,"Buscando impresoras...",13,0xffc8d1df,false);
+        LinearLayout test=card();
+        stepTitle(test,"3  ·  PROBAR EL TICKET");
+        detail(test,"Comprueba que salga el papel correcto antes de recibir pedidos de cocina.");
+        button(test,"IMPRIMIR TICKET DE PRUEBA",this::testPrinter);
+        LinearLayout auto=card();
+        stepTitle(auto,"4  ·  ACTIVAR AUTOMATICO");
+        detail(auto,"Al crear un pedido real de cocina, FuegoPOS lo enviara al Android registrado. Mantén Bluetooth y este servicio activos.");
+        button(auto,"ACTIVAR IMPRESION AUTOMATICA",()->{
             try{
-                if(SecureStore.read(this).isEmpty()){toast("Primero guarda la clave de la terminal");return;}
-                askPermissions();Intent i=new Intent(this,PrintService.class);i.setAction(PrintService.ACTION_START);
+                askPermissions();
+                Intent i=new Intent(this,PrintService.class);i.setAction(PrintService.ACTION_START);
                 if(Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);
-                toast("Servicio activado; verifica la notificación permanente");refresh();
+                toast("Servicio activado. Configura Cocina en el panel web.");refresh();
             }catch(Exception e){message("No se puede iniciar",e.getMessage());}
         });
-        button(main,"Detener servicio",()->{Intent i=new Intent(this,PrintService.class);i.setAction(PrintService.ACTION_STOP);startService(i);toast("Servicio detenido");refresh();});
-        button(main,"Actualizar lista de impresoras y estado",this::refresh);
-        button(main,"IMPRIMIR TICKET DE PRUEBA",this::testPrinter);
-        space(main,14);
-        label(main,"ESTADO DEL SERVICIO",14,YELLOW,true);
-        status=label(main,"Sin conexión",15,Color.WHITE,false);
-        space(main,12);
-        label(main,"IMPRESORAS DISPONIBLES EN ANDROID",14,YELLOW,true);
-        devices=label(main,"-",15,Color.WHITE,false);
-        label(main,"Después de iniciar el servicio, entra en Jonger's POS > Equipos e impresoras y asigna Cocina y Cliente. Si hay una sola impresora, el sistema puede asignarla automáticamente.",13,0xffb8c2d3,false);
-        setContentView(scroll);refresh();
+        button(auto,"Actualizar estado",this::refresh);
+        status=label(auto,"Verificando estado del servicio...",13,Color.WHITE,false);
+        detail(auto,"En FuegoPOS > Equipos e impresoras, elige la impresora detectada para Cocina y para el recibo. Si solo hay una, se podra usar en ambos.");
+        button(root,"Detener impresion automatica",()->{
+            Intent i=new Intent(this,PrintService.class);i.setAction(PrintService.ACTION_STOP);
+            startService(i);toast("Servicio detenido");refresh();
+        });
+        refresh();
     }
     private TextView label(LinearLayout root,String text,int size,int color,boolean bold){
         TextView v=new TextView(this);v.setText(text);v.setTextColor(color);v.setTextSize(size);v.setPadding(3,7,3,7);
@@ -115,7 +170,7 @@ public final class MainActivity extends Activity {
                 .setItems(labels.toArray(new String[0]),(dialog,index)->{
                     String mac=paired.get(index).getAddress().toUpperCase(java.util.Locale.ROOT);
                     SecureStore.publicPrefs(this).edit().putString("chosen_bluetooth_printer","BT:"+mac).apply();
-                    toast("Impresora seleccionada: "+mac);refresh();
+                    toast("Impresora seleccionada: "+mac);showSteps();
                 }).setNegativeButton("Cancelar",null).show();
         }catch(Exception e){message("Bluetooth",e.getMessage());}
     }
@@ -153,16 +208,20 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Impresora ESC/POS por red")
             .setMessage("Introduce la IP que tiene la impresora en la misma red local del Android")
             .setView(form).setPositiveButton("Guardar",(d,w)->{
-                try{PrinterConnections.addTcp(this,ip.getText().toString().trim(),Integer.parseInt(port.getText().toString().trim()));refresh();toast("Impresora guardada. Inicia el servicio para sincronizar.");}
+                try{PrinterConnections.addTcp(this,ip.getText().toString().trim(),Integer.parseInt(port.getText().toString().trim()));showSteps();toast("Impresora guardada. Inicia el servicio para sincronizar.");}
                 catch(Exception e){message("Datos inválidos",e.getMessage());}
             }).setNegativeButton("Cancelar",null).show();
     }
-    private void refresh(){if(status==null||devices==null)return;
-        long seen=SecureStore.publicPrefs(this).getLong("last_seen_at",0);
-        String last=SecureStore.publicPrefs(this).getString("last_status","Inicia el servicio para conectar");
-        status.setText(last+(seen>0?"\nÚltimo ciclo: "+android.text.format.DateFormat.format("HH:mm:ss",seen):""));
-        List<String> list=PrinterConnections.discover(this);
-        devices.setText(list.isEmpty()?"No hay impresoras. Empareja Bluetooth, autoriza USB o agrega IP Wi-Fi.":android.text.TextUtils.join("\n",list));
+    private void refresh(){
+        if(status!=null){
+            long seen=SecureStore.publicPrefs(this).getLong("last_seen_at",0);
+            String last=SecureStore.publicPrefs(this).getString("last_status","Pulsa ACTIVAR IMPRESION AUTOMATICA.");
+            status.setText(last+(seen>0?"\nUltima actividad: "+android.text.format.DateFormat.format("HH:mm:ss",seen):""));
+        }
+        if(devices!=null){
+            List<String> list=PrinterConnections.discover(this);
+            devices.setText(list.isEmpty()?"No hay impresora seleccionada. Empareja Bluetooth o autoriza USB.":"Detectadas: "+android.text.TextUtils.join("  |  ",list));
+        }
     }
     @Override protected void onResume(){super.onResume();refresh();}
     @Override protected void onDestroy(){unregisterReceiver(usbPermissionReceiver);super.onDestroy();}

@@ -146,7 +146,7 @@ public final class PrintService extends Service {
     static final class ServerError extends Exception {
         final int status; ServerError(int status,String msg){super("HTTP "+status+": "+msg);this.status=status;}
     }
-    private static JSONObject call(String token,Map<String,String> fields)throws Exception{
+    static JSONObject call(String token,Map<String,String> fields)throws Exception{
         HttpURLConnection conn=null;
         try{
             URL url=new URL(URL_API);
