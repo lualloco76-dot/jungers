@@ -4,10 +4,10 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId 'co.com.jongers.print'
-        minSdk 26
+        minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName '1.0-f17'
+        versionCode 2
+        versionName '1.1-Android6plus'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

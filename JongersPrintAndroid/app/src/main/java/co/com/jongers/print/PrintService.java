@@ -35,7 +35,9 @@ public final class PrintService extends Service {
     @Override public IBinder onBind(Intent intent){return null;}
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent!=null&&ACTION_STOP.equals(intent.getAction())){
-            working=false;if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return START_NOT_STICKY;
+            working=false;if(worker!=null)worker.interrupt();
+            if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);
+            stopSelf();return START_NOT_STICKY;
         }
         startVisible();
         synchronized(mutex){
@@ -45,10 +47,13 @@ public final class PrintService extends Service {
     }
     private void startVisible(){
         NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
-        nm.createNotificationChannel(new NotificationChannel(CHANNEL,"Impresión Jonger's",NotificationManager.IMPORTANCE_LOW));
-        PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification n=new Notification.Builder(this,CHANNEL)
-                .setContentTitle("Jonger's · Impresión automática")
+        if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(
+            new NotificationChannel(CHANNEL,"Impresión Jonger's",NotificationManager.IMPORTANCE_LOW));
+        PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),
+                PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification.Builder builder=Build.VERSION.SDK_INT>=26
+                ? new Notification.Builder(this,CHANNEL) : new Notification.Builder(this);
+        Notification n=builder.setContentTitle("Jonger's · Impresión automática")
                 .setContentText("Esperando comandas de FuegoPOS")
                 .setSmallIcon(android.R.drawable.ic_menu_info_details).setOngoing(true).setContentIntent(open).build();
         if(Build.VERSION.SDK_INT>=34)startForeground(513,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);

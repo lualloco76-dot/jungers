@@ -44,10 +44,13 @@ jobs:
       - name: Compilar APK de pruebas
         run: gradle --no-daemon --stacktrace -p JongersPrintAndroid :app:assembleDebug
 
-      - name: Verificar APK
+      - name: Verificar firma, integridad y compatibilidad del APK
         run: |
-          test -s JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk
-          unzip -t JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk | tail -n 1
+          APK=JongersPrintAndroid/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -t "$APK" | tail -n 1
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -E '^(package:|sdkVersion:|targetSdkVersion:|native-code:)'
 
       - name: Publicar APK
         uses: actions/upload-artifact@v4
