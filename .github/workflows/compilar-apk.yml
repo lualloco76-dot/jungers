@@ -30,11 +30,16 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Preparar Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verificar SDK Android disponible
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
 
       - name: Instalar plataforma Android
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
 
       - name: Compilar APK de pruebas
         run: gradle --no-daemon --stacktrace -p JongersPrintAndroid :app:assembleDebug
