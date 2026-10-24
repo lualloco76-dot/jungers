@@ -26,6 +26,7 @@ import java.util.Map;
 
 public final class PrintService extends Service {
     static final String URL_API="https://jongers.com.co/public/terminal_api.php";
+    static final String URL_API_ALT="https://jongers.com.co/terminal_api.php";
     static final String ACTION_START="co.com.jongers.print.START";
     static final String ACTION_STOP="co.com.jongers.print.STOP";
     static final String CHANNEL="jongers_print_service";
@@ -71,13 +72,13 @@ public final class PrintService extends Service {
                 if(token.isEmpty()){updateStatus(this,"Configura la clave del equipo.");working=false;break;}
                 if(SystemClock.elapsedRealtime()-discovery>15000||discovery==0){
                     JSONArray list=new JSONArray();for(String name:PrinterConnections.discover(this))list.put(name);
-                    JSONObject result=call(token,map("action","discover","printers",list.toString()));
+                    JSONObject result=call(this,token,map("action","discover","printers",list.toString()));
                     if(!result.optBoolean("ok",false))throw new Exception("No se pudo sincronizar impresoras");
                     discovery=SystemClock.elapsedRealtime();
                 }
                 // Resolver confirmación pendiente antes de pedir otro trabajo.
                 flushAcknowledgement(token);
-                JSONObject job=call(token,map("action","poll"));
+                JSONObject job=call(this,token,map("action","poll"));
                 String state=job.optString("state","");
                 if("job".equals(state))process(token,job);
                 else if("configuration_required".equals(state))updateStatus(this,"Elige las impresoras en Equipos e impresoras (FuegoPOS).");
@@ -128,7 +129,7 @@ public final class PrintService extends Service {
         JSONObject obj=new JSONObject(raw);
         Map<String,String> params=map("action","ack","job_id",String.valueOf(obj.optInt("job_id")),
             "lease",obj.optString("lease"),"ok",obj.optString("ok"),"error",obj.optString("error"));
-        try{JSONObject response=call(token,params);
+        try{JSONObject response=call(this,token,params);
             if(response.optBoolean("ok",false))prefs.edit().remove("pending_ack").commit();
         }catch(ServerError e){
             // Un ACK caducado ya no se puede reutilizar. El administrador revisará ese trabajo.
@@ -146,15 +147,64 @@ public final class PrintService extends Service {
     static final class ServerError extends Exception {
         final int status; ServerError(int status,String msg){super("HTTP "+status+": "+msg);this.status=status;}
     }
-    static JSONObject call(String token,Map<String,String> fields)throws Exception{
+    static final class RouteError extends Exception {
+        RouteError(String message){super(message);}
+    }
+    static JSONObject pair(android.content.Context context,String code) throws Exception {
+        StringBuilder failures=new StringBuilder();
+        for(String endpoint:new String[]{URL_API,URL_API_ALT}){
+            try{
+                JSONObject response=request(endpoint,"",map("action","pair","code",code));
+                if(response.optBoolean("ok",false)){
+                    SecureStore.publicPrefs(context).edit().putString("api_endpoint",endpoint).apply();
+                }
+                return response;
+            }catch(RouteError e){
+                failures.append("\n").append(endpoint).append(" — ").append(e.getMessage());
+            }catch(ServerError e){
+                if(e.status!=404 && e.status!=405 && e.status!=502 && e.status!=503)throw e;
+                failures.append("\n").append(endpoint).append(" — HTTP ").append(e.status);
+            }
+        }
+        throw new Exception("FuegoPOS no responde como API en ninguna de las dos rutas. "
+            +"Comprueba que public/terminal_api.php esté instalado en cPanel y que no haya "
+            +"una redirección de acceso o bloqueo del servidor."+failures);
+    }
+    static String diagnose(android.content.Context context) throws Exception {
+        StringBuilder failures=new StringBuilder();
+        for(String endpoint:new String[]{URL_API,URL_API_ALT}){
+            try{
+                request(endpoint,"",map("action","pair","code","0"));
+                SecureStore.publicPrefs(context).edit().putString("api_endpoint",endpoint).apply();
+                return "API disponible: "+endpoint;
+            }catch(ServerError e){
+                if(e.status==400 && e.getMessage().contains("10")){
+                    SecureStore.publicPrefs(context).edit().putString("api_endpoint",endpoint).apply();
+                    return "API funcionando: "+endpoint;
+                }
+                failures.append("\n").append(endpoint).append(" — HTTP ").append(e.status);
+            }catch(RouteError e){
+                failures.append("\n").append(endpoint).append(" — ").append(e.getMessage());
+            }
+        }
+        throw new Exception("El servidor no está entregando JSON. Reinstala el archivo "
+            +"public/terminal_api.php desde la actualización 22 y revisa la ruta en el navegador."+failures);
+    }
+    static JSONObject call(android.content.Context context,String token,Map<String,String> fields)throws Exception{
+        String endpoint=SecureStore.publicPrefs(context).getString("api_endpoint",URL_API);
+        if(!URL_API.equals(endpoint)&&!URL_API_ALT.equals(endpoint))endpoint=URL_API;
+        return request(endpoint,token,fields);
+    }
+    private static JSONObject request(String endpoint,String token,Map<String,String> fields)throws Exception{
         HttpURLConnection conn=null;
         try{
-            URL url=new URL(URL_API);
-            conn=(HttpURLConnection)url.openConnection();
-            conn.setRequestMethod("POST");conn.setConnectTimeout(8000);conn.setReadTimeout(20000);
+            conn=(HttpURLConnection)new URL(endpoint).openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(8000);conn.setReadTimeout(20000);
             conn.setDoOutput(true);conn.setInstanceFollowRedirects(false);
             conn.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=utf-8");
-            conn.setRequestProperty("X-Jongers-Print-Token",token);
+            conn.setRequestProperty("Accept","application/json");
+            if(!token.isEmpty())conn.setRequestProperty("X-Jongers-Print-Token",token);
             StringBuilder body=new StringBuilder();
             for(Map.Entry<String,String> field:fields.entrySet()){
                 if(body.length()>0)body.append('&');
@@ -165,16 +215,32 @@ public final class PrintService extends Service {
             conn.setFixedLengthStreamingMode(bytes.length);
             try(OutputStream out=conn.getOutputStream()){out.write(bytes);}
             int status=conn.getResponseCode();
+            if(status>=300&&status<400)
+                throw new RouteError("HTTP "+status+": el hosting está redirigiendo la solicitud.");
             InputStream stream=status>=200&&status<300?conn.getInputStream():conn.getErrorStream();
-            if(stream==null)throw new ServerError(status,"Respuesta vacía");
+            if(stream==null)throw new RouteError("HTTP "+status+": respuesta vacía.");
             ByteArrayOutputStream response=new ByteArrayOutputStream();
-            try(InputStream in=stream){byte[] buf=new byte[8192];int size;
-                while((size=in.read(buf))!=-1){if(response.size()+size>4*1024*1024)throw new Exception("Respuesta demasiado grande");response.write(buf,0,size);}
+            try(InputStream in=stream){
+                byte[] buf=new byte[8192];int size;
+                while((size=in.read(buf))!=-1){
+                    if(response.size()+size>4*1024*1024)throw new Exception("Respuesta demasiado grande");
+                    response.write(buf,0,size);
+                }
             }
-            JSONObject obj=new JSONObject(response.toString("UTF-8"));
-            if(status!=200)throw new ServerError(status,obj.optString("error","Error remoto"));
+            String raw=response.toString("UTF-8").trim();
+            if(raw.startsWith("<")||raw.startsWith("<!")){
+                throw new RouteError("HTTP "+status+": el servidor devolvió HTML, no JSON "
+                    +"(página de error, login o protección web).");
+            }
+            JSONObject obj;
+            try{obj=new JSONObject(raw);}
+            catch(org.json.JSONException e){
+                throw new RouteError("HTTP "+status+": respuesta de API no válida.");
+            }
+            if(status!=200)throw new ServerError(status,obj.optString("error","Error del servidor"));
             return obj;
         }finally{if(conn!=null)conn.disconnect();}
     }
+
     @Override public void onDestroy(){working=false;if(worker!=null)worker.interrupt();super.onDestroy();}
 }

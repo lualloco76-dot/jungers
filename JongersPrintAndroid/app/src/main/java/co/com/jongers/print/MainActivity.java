@@ -84,13 +84,23 @@ public final class MainActivity extends Activity {
             code.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
             code.setPadding(dp(14),dp(11),dp(14),dp(11));code.setBackground(panelDrawable(BG,10));
             intro.addView(code,new LinearLayout.LayoutParams(-1,dp(56)));
+            button(intro,"COMPROBAR CONEXION CON FUEGOPOS",()->{
+                new Thread(()->{
+                    try{
+                        String result=PrintService.diagnose(this);
+                        runOnUiThread(()->message("Servidor disponible",result+"\\nYa puedes introducir el codigo de 10 digitos."));
+                    }catch(Exception ex){
+                        runOnUiThread(()->message("Problema con el servidor",ex.getMessage()));
+                    }
+                },"jongers-test-api").start();
+            });
             button(intro,"CONECTAR ESTE ANDROID",()->{
                 String value=code.getText().toString().trim();
                 if(!value.matches("[0-9]{10}")){message("Codigo incompleto","Escribe los 10 digitos mostrados en FuegoPOS.");return;}
                 code.setEnabled(false);
                 new Thread(()->{
                     try{
-                        org.json.JSONObject response=PrintService.call("",PrintService.map("action","pair","code",value));
+                        org.json.JSONObject response=PrintService.pair(this,value);
                         if(!response.optBoolean("ok",false))throw new Exception(response.optString("error","No se pudo vincular"));
                         SecureStore.save(this,response.getString("token"));
                         String name=response.optString("terminal_name","Android Jonger's");
