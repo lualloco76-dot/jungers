@@ -174,21 +174,21 @@ public final class PrintService extends Service {
         StringBuilder failures=new StringBuilder();
         for(String endpoint:new String[]{URL_API,URL_API_ALT}){
             try{
-                request(endpoint,"",map("action","pair","code","0"));
-                SecureStore.publicPrefs(context).edit().putString("api_endpoint",endpoint).apply();
-                return "API disponible: "+endpoint;
-            }catch(ServerError e){
-                if(e.status==400 && e.getMessage().contains("10")){
+                JSONObject data=request(endpoint,"",map("action","health"));
+                if(data.optBoolean("ok",false)&&"jongers-print".equals(data.optString("service",""))){
                     SecureStore.publicPrefs(context).edit().putString("api_endpoint",endpoint).apply();
-                    return "API funcionando: "+endpoint;
+                    return "API funcionando ("+data.optString("api_version","nueva")+"): "+endpoint;
                 }
-                failures.append("\n").append(endpoint).append(" — HTTP ").append(e.status);
+                failures.append("\n").append(endpoint).append(" — Respuesta no reconocida");
+            }catch(ServerError e){
+                failures.append("\n").append(endpoint).append(" — ").append(e.getMessage());
             }catch(RouteError e){
                 failures.append("\n").append(endpoint).append(" — ").append(e.getMessage());
             }
         }
-        throw new Exception("El servidor no está entregando JSON. Reinstala el archivo "
-            +"public/terminal_api.php desde la actualización 22 y revisa la ruta en el navegador."+failures);
+        throw new Exception("El servidor no respondió a la comprobación de salud de Jonger's Print. "+
+            "Primero instala public/terminal_api.php de la Fase 24 y revisa "+
+            "https://jongers.com.co/public/terminal_api.php?health=1 en tu navegador." + failures);
     }
     static JSONObject call(android.content.Context context,String token,Map<String,String> fields)throws Exception{
         String endpoint=SecureStore.publicPrefs(context).getString("api_endpoint",URL_API);
@@ -237,7 +237,15 @@ public final class PrintService extends Service {
             catch(org.json.JSONException e){
                 throw new RouteError("HTTP "+status+": respuesta de API no válida.");
             }
-            if(status!=200)throw new ServerError(status,obj.optString("error","Error del servidor"));
+            if(status!=200){
+                String detail=obj.optString("error",obj.optString("message",""));
+                if(detail.isEmpty()){
+                    detail=status==403
+                        ? "Acceso denegado. Verifica el codigo y que no exista bloqueo de seguridad del hosting."
+                        : "Respuesta de servidor sin detalle.";
+                }
+                throw new ServerError(status,detail);
+            }
             return obj;
         }finally{if(conn!=null)conn.disconnect();}
     }
