@@ -1,0 +1,10 @@
+JONGER'S PRINT LIBRE 2.3 — AHORRO DE PAPEL
+================================================
+Cambio principal: cada página del PDF se rasteriza y analiza por filas desde abajo. Se eliminan todas las filas blancas posteriores a la última fila con tinta. Las páginas completamente blancas se omiten.
+
+La impresión ya no envía a ESC/POS el tamaño fijo completo (30 cm) del documento.
+Solo se mantienen las filas de contenido reales, sin salto de página ni ESC d 2.
+Después del contenido se añaden 16 puntos (~2 mm) y se envía el comando de corte.
+Desde la interfaz se puede seleccionar un margen de 0, 2 o 5 mm.
+
+Limites: algunas impresoras alimentan papel automáticamente al ejecutar el comando de corte, independientemente de la app; el diseño HTML/PDF puede contener saltos internos o pies de página, que se conservan como contenido. Este ajuste solo recorta el blanco final, sin suprimir productos, datos ni logos.

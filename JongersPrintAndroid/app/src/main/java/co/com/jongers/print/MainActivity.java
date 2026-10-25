@@ -133,6 +133,7 @@ public final class MainActivity extends Activity {
         button(printer,"Usar impresora USB",this::allowUsb);
         button(printer,"Usar impresora Wi-Fi",this::addWifi);
         button(printer,"Ancho de papel (58 / 80 mm)",this::choosePaper);
+        button(printer,"Margen inferior y ahorro de papel",this::chooseBottomFeed);
         devices=label(printer,"Buscando impresoras...",13,0xffc8d1df,false);
         LinearLayout test=card();
         stepTitle(test,"4  ·  PROBAR EL TICKET");
@@ -250,6 +251,19 @@ public final class MainActivity extends Activity {
                 d.dismiss();toast("Ancho guardado. Si el servicio ya esta activo, vuelve a abrir el menu de impresion para actualizar.");
             }).setNegativeButton("Cancelar",null).show();
     }
+    private void chooseBottomFeed(){
+        int current=SecureStore.publicPrefs(this).getInt("bottom_feed_dots",16);
+        String[] labels={"0 mm · Sin margen adicional","2 mm · Recomendado","5 mm · Corte con mayor margen"};
+        int[] dots={0,16,40};
+        int selected=current==0?0:(current==40?2:1);
+        new AlertDialog.Builder(this).setTitle("Margen final del ticket")
+            .setSingleChoiceItems(labels,selected,(dialog,which)->{
+                SecureStore.publicPrefs(this).edit().putInt("bottom_feed_dots",dots[which]).apply();
+                dialog.dismiss();
+                toast("Margen guardado. Se recortara el espacio blanco del PDF automaticamente.");
+            }).setNegativeButton("Cancelar",null).show();
+    }
+
     private void refresh(){
         if(status!=null){
             long seen=SecureStore.publicPrefs(this).getLong("last_seen_at",0);

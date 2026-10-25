@@ -211,13 +211,20 @@ public final class JongersAndroidPrintService extends android.printservice.Print
                  PdfRenderer pdf = new PdfRenderer(localFile)) {
             if (pdf.getPageCount() == 0) throw new IOException("Documento PDF vacío");
             if (pdf.getPageCount() > 40) throw new IOException("Documento excesivamente largo");
+            int printedPages = 0;
+            int removedBlankDots = 0;
             for (int p = 0; p < pdf.getPageCount(); p++) {
                 if (cancel.get()) throw new IOException("Cancelado");
                 try (PdfRenderer.Page page = pdf.openPage(p)) {
+                    if (page.getWidth() <= 0 || page.getHeight() <= 0)
+                        throw new IOException("Dimensiones PDF incorrectas");
                     float scale = dots / (float) page.getWidth();
                     int fullHeight = (int) Math.ceil(page.getHeight() * scale);
                     if (fullHeight <= 0 || fullHeight > 16000)
                         throw new IOException("Página demasiado larga");
+                    int bytesPerRow = (dots + 7) / 8;
+                    ByteArrayOutputStream pixels = new ByteArrayOutputStream(
+                        Math.min(256 * 1024, fullHeight * bytesPerRow));
                     for (int top = 0; top < fullHeight; top += 192) {
                         if (cancel.get()) throw new IOException("Cancelado");
                         int height = Math.min(192, fullHeight - top);
@@ -229,16 +236,48 @@ public final class JongersAndroidPrintService extends android.printservice.Print
                             matrix.postTranslate(0, -top);
                             page.render(bitmap, new Rect(0, 0, dots, height), matrix,
                                 PdfRenderer.Page.RENDER_MODE_FOR_PRINT);
-                            raster(bitmap, out);
+                            rasterRows(bitmap, pixels);
                         } finally {
                             bitmap.recycle();
                         }
-                        if (out.size() > 2 * 1024 * 1024)
-                            throw new IOException("Ticket mayor al tamaño permitido");
                     }
+                    byte[] raw = pixels.toByteArray();
+                    int lastContentRow = -1;
+                    for (int row = fullHeight - 1; row >= 0 && lastContentRow < 0; row--) {
+                        int offset = row * bytesPerRow;
+                        for (int j = 0; j < bytesPerRow; j++) {
+                            if (raw[offset + j] != 0) {
+                                lastContentRow = row;
+                                break;
+                            }
+                        }
+                    }
+                    if (lastContentRow < 0) {
+                        removedBlankDots += fullHeight;
+                        continue; // Páginas sin contenido nunca deben gastar papel.
+                    }
+                    int keptRows = lastContentRow + 1;
+                    removedBlankDots += fullHeight - keptRows;
+                    writeRasterRows(raw, bytesPerRow, keptRows, out);
+                    printedPages++;
+                    if (out.size() > 2 * 1024 * 1024)
+                        throw new IOException("Ticket mayor al tamaño permitido");
+                    // Las páginas consecutivas comparten un único rollo de papel.
+                    // No emitir salto de página ni alimentaciones grandes.
+                    if (p + 1 < pdf.getPageCount())
+                        out.write(new byte[]{0x1b, 0x4a, 0x08});
                 }
-                out.write(new byte[]{0x1b, 0x64, 0x02});
             }
+            if (printedPages == 0)
+                throw new IOException("El PDF no contiene texto ni imágenes imprimibles");
+            int feedDots = SecureStore.publicPrefs(this).getInt("bottom_feed_dots", 16);
+            if (feedDots < 0 || feedDots > 80) feedDots = 16;
+            // ESC J alimenta SOLO los puntos elegidos: por defecto ~2 mm a 203 dpi.
+            if (feedDots > 0) out.write(new byte[]{0x1b, 0x4a, (byte)feedDots});
+            note("Ticket optimizado: " + printedPages + " pagina(s); "
+                + Math.round(removedBlankDots * 25.4f / 203f)
+                + " mm de espacio blanco recortado. Margen final: "
+                + Math.round(feedDots * 25.4f / 203f) + " mm.");
         }
         } finally {
             if (!temp.delete()) temp.deleteOnExit();
@@ -247,12 +286,10 @@ public final class JongersAndroidPrintService extends android.printservice.Print
         return out.toByteArray();
     }
 
-    private static void raster(Bitmap bitmap, ByteArrayOutputStream out) throws IOException {
+    /** Produce los bits de cada línea. Blanco = 0, negro = 1. */
+    private static void rasterRows(Bitmap bitmap, ByteArrayOutputStream rows) throws IOException {
         int width = bitmap.getWidth(), height = bitmap.getHeight();
         int rowBytes = (width + 7) / 8;
-        out.write(new byte[]{0x1d, 0x76, 0x30, 0x00,
-            (byte)(rowBytes & 255), (byte)((rowBytes >> 8) & 255),
-            (byte)(height & 255), (byte)((height >> 8) & 255)});
         int[] pixels = new int[width];
         byte[] row = new byte[rowBytes];
         for (int y = 0; y < height; y++) {
@@ -266,7 +303,19 @@ public final class JongersAndroidPrintService extends android.printservice.Print
                 if (alpha >= 128 && lum < 178)
                     row[x >> 3] |= (byte)(0x80 >> (x & 7));
             }
-            out.write(row, 0, row.length);
+            rows.write(row, 0, row.length);
+        }
+    }
+
+    /** Emite raster ESC/POS GS v 0, únicamente hasta la última línea con tinta. */
+    private static void writeRasterRows(byte[] raw, int rowBytes, int totalRows,
+                                        ByteArrayOutputStream out) throws IOException {
+        for (int start = 0; start < totalRows; start += 192) {
+            int count = Math.min(192, totalRows - start);
+            out.write(new byte[]{0x1d, 0x76, 0x30, 0x00,
+                (byte)(rowBytes & 255), (byte)((rowBytes >> 8) & 255),
+                (byte)(count & 255), (byte)((count >> 8) & 255)});
+            out.write(raw, start * rowBytes, count * rowBytes);
         }
     }
 
