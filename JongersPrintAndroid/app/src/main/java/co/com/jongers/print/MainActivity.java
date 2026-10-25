@@ -287,7 +287,8 @@ public final class MainActivity extends Activity {
             String last=SecureStore.publicPrefs(this).getString("last_status","Pulsa ACTIVAR IMPRESION AUTOMATICA.");
             android.content.SharedPreferences p=SecureStore.publicPrefs(this);
             long remote=p.getLong("last_server_ok_at",0L);
-            boolean online=p.getBoolean("remote_connected",false);
+            boolean online=p.getBoolean("remote_connected",false) && remote>0L
+                && System.currentTimeMillis()-remote<90000L;
             String problem=p.getString("last_remote_error","");
             String link=online?"SERVIDOR CONFIRMADO":"SERVIDOR NO CONFIRMADO";
             if(remote>0)link+="\nÚltima comunicación correcta: "+
