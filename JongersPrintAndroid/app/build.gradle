@@ -6,8 +6,8 @@ android {
         applicationId 'co.com.jongers.print.libre'
         minSdk 23
         targetSdk 34
-        versionCode 9
-        versionName '2.3-ahorro-papel'
+        versionCode 10
+        versionName '2.4-conexion-estable'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
