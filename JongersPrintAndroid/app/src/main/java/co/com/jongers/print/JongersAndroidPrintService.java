@@ -107,32 +107,40 @@ public final class JongersAndroidPrintService extends android.printservice.Print
             String jobId = job.getId().toString();
             AtomicBoolean cancel = new AtomicBoolean(false);
             cancelled.put(jobId, cancel);
-            note("Trabajo recibido de Android: " + jobId);
-            queue.execute(() -> {
-                String error = null;
-                try {
-                    if (cancel.get()) throw new IOException("Impresion cancelada");
-                    if (job.getInfo() == null || job.getInfo().getPrinterId() == null)
-                        throw new IOException("Android no indico la impresora de destino");
-                    String printer = job.getInfo().getPrinterId().getLocalId();
-                    if (!PrinterConnections.discover(this).contains(printer))
-                        throw new IOException("Impresora no disponible: " + printer
-                            + ". Abre Jonger's Print Libre y realiza una prueba.");
-                    int dots = SecureStore.publicPrefs(this).getInt("paper_width_dots", 384);
-                    if (dots != 384 && dots != 576) dots = 384;
-                    if (job.getDocument() == null)
-                        throw new IOException("Android no entrego el documento");
-                    byte[] escpos = pdfToEscPos(job.getDocument().getData(), dots, cancel);
+            // PrintJob y PrintDocument exigen el hilo principal de Android.
+            // Capturamos todos los datos necesarios ANTES de pasar el trabajo al ejecutor.
+            if (job.getInfo() == null || job.getInfo().getPrinterId() == null)
+                throw new IOException("Android no indico la impresora de destino");
+            final String printer = job.getInfo().getPrinterId().getLocalId();
+            if (job.getDocument() == null)
+                throw new IOException("Android no entrego el documento");
+            final ParcelFileDescriptor data = job.getDocument().getData();
+            if (data == null)
+                throw new IOException("No fue posible acceder al PDF enviado por Android");
+            note("Trabajo recibido de Android: " + jobId + ". Leyendo documento...");
+            try {
+                queue.execute(() -> {
+                    String error = null;
+                    try {
+                        if (cancel.get()) throw new IOException("Impresion cancelada");
+                        if (!PrinterConnections.discover(this).contains(printer))
+                            throw new IOException("Impresora no disponible: " + printer
+                                + ". Abre Jonger's Print Libre y realiza una prueba.");
+                        int dots = SecureStore.publicPrefs(this).getInt("paper_width_dots", 384);
+                        if (dots != 384 && dots != 576) dots = 384;
+                        byte[] escpos = pdfToEscPos(data, dots, cancel);
                     if (cancel.get()) throw new IOException("Impresion cancelada");
                     PrinterConnections.print(this, printer, escpos);
                     long count = SecureStore.publicPrefs(this).getLong("system_print_count", 0L);
                     SecureStore.publicPrefs(this).edit().putLong("system_print_count", count + 1).apply();
                     note("Ticket transmitido a " + printer + ". Confirma la salida del papel.");
-                } catch (Throwable e) {
-                    error = explain(e);
-                    note("Error al imprimir: " + error);
-                }
-                final String result = error;
+                    } catch (Throwable e) {
+                        error = explain(e);
+                        note("Error al imprimir: " + error);
+                    } finally {
+                        try { data.close(); } catch (IOException ignored) { }
+                    }
+                    final String result = error;
                 try {
                     main.post(() -> {
                         cancelled.remove(jobId);
@@ -148,13 +156,17 @@ public final class JongersAndroidPrintService extends android.printservice.Print
                             note("Error de finalizacion: " + explain(finishError));
                         }
                     });
-                } catch (Throwable completionError) {
-                    note("Error al responder a Android: " + explain(completionError));
-                }
-            });
+                    } catch (Throwable completionError) {
+                        note("Error al responder a Android: " + explain(completionError));
+                    }
+                });
+            } catch (RuntimeException queueError) {
+                try { data.close(); } catch (IOException ignored) { }
+                throw queueError;
+            }
         } catch (Throwable startupError) {
             note("Error al aceptar documento: " + explain(startupError));
-            try { job.fail(explain(startupError)); } catch (Throwable ignored) { }
+            try { if (job != null) job.fail(explain(startupError)); } catch (Throwable ignored) { }
         }
     }
 
