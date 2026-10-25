@@ -71,13 +71,20 @@ public final class MainActivity extends Activity {
     private void showSteps(){
         root.removeAllViews();status=null;devices=null;
         label(root,"JONGER'S",33,YELLOW,true);
-        label(root,"PRINT  ·  IMPRESION AUTOMATICA",13,0xffd4dbe6,true);
-        detail(root,"Conecta este Android a las comandas de cocina, sin claves largas ni configuraciones técnicas.");
+        label(root,"PRINT LIBRE  ·  GRATIS  ·  SIN LIMITE DE TICKETS",13,0xffd4dbe6,true);
+        detail(root,"Servicio ESC/POS sin pagos por impresion. Imprime desde Android por USB, Bluetooth o Wi-Fi. El enlace remoto a FuegoPOS es opcional.");
+        LinearLayout local=card();
+        stepTitle(local,"1  ·  IMPRESION DEL SISTEMA ANDROID");
+        detail(local,"Esta funcion NO requiere codigo de 10 digitos ni conexion a la API. Configura la impresora mas abajo y activa el servicio en Ajustes de Android. Luego usa Imprimir desde Chrome.");
+        button(local,"ACTIVAR IMPRESION EN ANDROID",this::openSystemPrinting);
+        detail(local,"Desde la pantalla de impresion elige Jonger's Print Libre. Android puede pedir confirmar cada ticket. Las comandas remotas automaticas son un modo separado.");
+        long printed=SecureStore.publicPrefs(this).getLong("system_print_count",0L);
+        label(local,"Tickets por Android enviados: "+printed+" · Sin cobro ni caducidad",14,YELLOW,true);
         boolean ready=paired();
         LinearLayout intro=card();
-        stepTitle(intro,ready?"EQUIPO VINCULADO":"1  ·  VINCULAR ANDROID");
+        stepTitle(intro,ready?"FUEGOPOS REMOTO · VINCULADO":"2  ·  ENLACE REMOTO FUEGOPOS (OPCIONAL)");
         if(!ready){
-            detail(intro,"En FuegoPOS abre Equipos e impresoras, registra el Android y pulsa Generar codigo. Es valido durante 10 minutos.");
+            detail(intro,"Solo para recibir COMANDAS AUTOMATICAS enviadas desde otros equipos. En FuegoPOS > Equipos e impresoras genera el codigo (10 minutos). Si Imunify360 bloquea el enlace, puedes seguir imprimiendo localmente desde Android.");
             EditText code=new EditText(this);code.setSingleLine(true);code.setTextSize(23);
             code.setTextColor(Color.WHITE);code.setHintTextColor(0xff7c8b9e);
             code.setHint("Codigo de 10 digitos");code.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -88,7 +95,7 @@ public final class MainActivity extends Activity {
                 new Thread(()->{
                     try{
                         String result=PrintService.diagnose(this);
-                        runOnUiThread(()->message("Servidor disponible",result+"\\nYa puedes introducir el codigo de 10 digitos."));
+                        runOnUiThread(()->message("Servidor disponible",result+"\nYa puedes introducir el codigo de 10 digitos."));
                     }catch(Exception ex){
                         runOnUiThread(()->message("Problema con el servidor",ex.getMessage()));
                     }
@@ -109,25 +116,27 @@ public final class MainActivity extends Activity {
                 },"jongers-pair").start();
             });
             detail(intro,"El codigo se utiliza una sola vez. La aplicacion guarda la autorizacion de manera cifrada.");
-            label(root,"Despues de conectar apareceran los pasos de impresora y prueba.",13,0xff8290a4,false);
-            return;
+            label(root,"La impresora local se puede usar sin conectar con FuegoPOS.",13,0xff8290a4,false);
+        } else {
+            detail(intro,"Este dispositivo ya esta autorizado. No necesitas escribir otra clave al imprimir.");
         }
-        detail(intro,"Este dispositivo ya esta autorizado. No necesitas escribir otra clave al imprimir.");
         LinearLayout printer=card();
-        stepTitle(printer,"2  ·  ELEGIR IMPRESORA");
+        stepTitle(printer,"3  ·  ELEGIR IMPRESORA");
         detail(printer,"Primero empareja la impresora desde Ajustes Bluetooth de Android. Despues seleccionala aqui.");
         button(printer,"BUSCAR IMPRESORA BLUETOOTH",this::chooseBluetooth);
         button(printer,"Usar impresora USB",this::allowUsb);
         button(printer,"Usar impresora Wi-Fi",this::addWifi);
+        button(printer,"Ancho de papel (58 / 80 mm)",this::choosePaper);
         devices=label(printer,"Buscando impresoras...",13,0xffc8d1df,false);
         LinearLayout test=card();
-        stepTitle(test,"3  ·  PROBAR EL TICKET");
+        stepTitle(test,"4  ·  PROBAR EL TICKET");
         detail(test,"Comprueba que salga el papel correcto antes de recibir pedidos de cocina.");
         button(test,"IMPRIMIR TICKET DE PRUEBA",this::testPrinter);
         LinearLayout auto=card();
-        stepTitle(auto,"4  ·  ACTIVAR AUTOMATICO");
-        detail(auto,"Al crear un pedido real de cocina, FuegoPOS lo enviara al Android registrado. Mantén Bluetooth y este servicio activos.");
-        button(auto,"ACTIVAR IMPRESION AUTOMATICA",()->{
+        stepTitle(auto,"5  ·  COMANDAS REMOTAS AUTOMATICAS");
+        detail(auto,"Opcion para pedidos enviados desde otros dispositivos. Requiere vincular el Android a FuegoPOS y que el hosting no bloquee la API. No es necesaria para imprimir localmente desde Android.");
+        button(auto,"ACTIVAR RECEPCION AUTOMATICA DE COMANDAS",()->{
+            if(!paired()){message("Falta vinculacion remota","Para recibir pedidos de otros meseros debes vincular este equipo a FuegoPOS. Para imprimir desde Chrome solo activa el Servicio de impresion de Android.");return;}
             try{
                 askPermissions();
                 Intent i=new Intent(this,PrintService.class);i.setAction(PrintService.ACTION_START);
@@ -220,6 +229,19 @@ public final class MainActivity extends Activity {
             .setView(form).setPositiveButton("Guardar",(d,w)->{
                 try{PrinterConnections.addTcp(this,ip.getText().toString().trim(),Integer.parseInt(port.getText().toString().trim()));showSteps();toast("Impresora guardada. Inicia el servicio para sincronizar.");}
                 catch(Exception e){message("Datos inválidos",e.getMessage());}
+            }).setNegativeButton("Cancelar",null).show();
+    }
+    private void openSystemPrinting(){
+        try{startActivity(new Intent(android.provider.Settings.ACTION_PRINT_SETTINGS));}
+        catch(Exception e){message("Ajustes de impresion","En Ajustes de Android busca Impresion, Servicios de impresion y activa Jonger's Print Libre.");}
+    }
+    private void choosePaper(){
+        String[] modes={"58 mm · 384 puntos","80 mm · 576 puntos"};
+        int current=SecureStore.publicPrefs(this).getInt("paper_width_dots",384)==576?1:0;
+        new AlertDialog.Builder(this).setTitle("Ancho del papel termico")
+            .setSingleChoiceItems(modes,current,(d,i)->{
+                SecureStore.publicPrefs(this).edit().putInt("paper_width_dots",i==1?576:384).apply();
+                d.dismiss();toast("Ancho guardado. Si el servicio ya esta activo, vuelve a abrir el menu de impresion para actualizar.");
             }).setNegativeButton("Cancelar",null).show();
     }
     private void refresh(){
