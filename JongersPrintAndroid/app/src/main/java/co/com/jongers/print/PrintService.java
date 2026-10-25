@@ -37,9 +37,12 @@ public final class PrintService extends Service {
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent!=null&&ACTION_STOP.equals(intent.getAction())){
             working=false;if(worker!=null)worker.interrupt();
+            SecureStore.publicPrefs(this).edit().putBoolean("auto_start_printing",false).apply();
             if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);
             stopSelf();return START_NOT_STICKY;
         }
+        if(intent!=null&&ACTION_START.equals(intent.getAction()))
+            SecureStore.publicPrefs(this).edit().putBoolean("auto_start_printing",true).apply();
         startVisible();
         synchronized(mutex){
             if(!working){working=true;worker=new Thread(this::runLoop,"jongers-print-poll");worker.start();}
@@ -64,9 +67,42 @@ public final class PrintService extends Service {
         SecureStore.publicPrefs(s).edit().putString("last_status",message)
             .putLong("last_seen_at",System.currentTimeMillis()).apply();
     }
+    static void markServerSuccess(android.content.Context context){
+        SecureStore.publicPrefs(context).edit()
+            .putBoolean("remote_connected",true)
+            .putLong("last_server_ok_at",System.currentTimeMillis())
+            .putString("last_remote_error","").apply();
+    }
+    static void markServerFailure(android.content.Context context,String error){
+        SecureStore.publicPrefs(context).edit()
+            .putBoolean("remote_connected",false)
+            .putString("last_remote_error",safe(error))
+            .putLong("last_remote_error_at",System.currentTimeMillis()).apply();
+    }
+    // Comprobación autenticada: no toma ningún trabajo de impresión de la cola.
+    static String checkConnection(android.content.Context context) throws Exception {
+        String token=SecureStore.read(context);
+        if(token.isEmpty())throw new Exception("Este Android todavía no está vinculado.");
+        JSONArray list=new JSONArray();
+        for(String name:PrinterConnections.discover(context))list.put(name);
+        if(list.length()==0)throw new Exception("No hay impresoras seleccionadas en Android.");
+        try{
+            JSONObject result=call(context,token,map("action","discover","printers",list.toString()));
+            if(!result.optBoolean("ok",false))
+                throw new Exception(result.optString("error","El servidor rechazó la sincronización."));
+            markServerSuccess(context);
+            return "Conexión autenticada y "+list.length()+" impresora(s) informada(s) al servidor. "
+                +"Verifica en FuegoPOS que el equipo principal esté activo y asignado.";
+        }catch(Exception e){
+            markServerFailure(context,e.getMessage());
+            throw e;
+        }
+    }
     private void runLoop(){
         long discovery=0;
+        int consecutiveFailures=0;
         while(working&&!Thread.currentThread().isInterrupted()){
+            long retryDelayMs=3500L;
             try{
                 String token=SecureStore.read(this);
                 if(token.isEmpty()){updateStatus(this,"Configura la clave del equipo.");working=false;break;}
@@ -75,17 +111,29 @@ public final class PrintService extends Service {
                     JSONObject result=call(this,token,map("action","discover","printers",list.toString()));
                     if(!result.optBoolean("ok",false))throw new Exception("No se pudo sincronizar impresoras");
                     discovery=SystemClock.elapsedRealtime();
+                    markServerSuccess(this);
                 }
                 // Resolver confirmación pendiente antes de pedir otro trabajo.
                 flushAcknowledgement(token);
                 JSONObject job=call(this,token,map("action","poll"));
+                if(!job.optBoolean("ok",true))throw new Exception(job.optString("error","FuegoPOS rechazó la consulta."));
+                markServerSuccess(this);
+                consecutiveFailures=0;
                 String state=job.optString("state","");
                 if("job".equals(state))process(token,job);
                 else if("configuration_required".equals(state))updateStatus(this,"Elige las impresoras en Equipos e impresoras (FuegoPOS).");
                 else if("printer_disconnected".equals(state))updateStatus(this,"Impresora desconectada. Ticket conservado en la cola.");
                 else if("idle".equals(state))updateStatus(this,"Conectado. Esperando nuevos tickets.");
-            }catch(Exception e){updateStatus(this,"Aviso: "+safe(e.getMessage()));}
-            try{Thread.sleep(3500);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+            }catch(Exception e){
+                consecutiveFailures=Math.min(consecutiveFailures+1,4);
+                retryDelayMs=Math.min(30000L,3500L*(1L<<consecutiveFailures));
+                markServerFailure(this,e.getMessage());
+                String detail=safe(e.getMessage());
+                if(detail.startsWith("HTTP 403"))
+                    updateStatus(this,"FuegoPOS rechazó la conexión (HTTP 403). Revisar firewall/Imunify360 del hosting.");
+                else updateStatus(this,"Sin enlace al servidor. Reintentando: "+detail);
+            }
+            try{Thread.sleep(retryDelayMs);}catch(InterruptedException e){Thread.currentThread().interrupt();}
         }
         if(!working)stopSelf();
     }
