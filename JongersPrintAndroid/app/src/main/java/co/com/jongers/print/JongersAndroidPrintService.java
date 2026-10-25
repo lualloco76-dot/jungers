@@ -13,6 +13,11 @@ import android.print.PrinterInfo;
 import android.printservice.PrintJob;
 import android.printservice.PrinterDiscoverySession;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import android.util.Log;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +35,19 @@ public final class JongersAndroidPrintService extends android.printservice.Print
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService queue = Executors.newSingleThreadExecutor();
     private final ConcurrentHashMap<String, AtomicBoolean> cancelled = new ConcurrentHashMap<>();
+
+    private void note(String state) {
+        Log.i("JongersPrintLibre", state);
+        try {
+            SecureStore.publicPrefs(this).edit()
+                .putString("last_print_diagnostic", state.length() > 600 ? state.substring(0,600) : state)
+                .putLong("last_print_diagnostic_at", System.currentTimeMillis()).apply();
+        } catch (Throwable ignored) { }
+    }
+    private static String explain(Throwable e) {
+        String message = e.getMessage();
+        return e.getClass().getSimpleName()+": "+(message == null ? "Sin detalle" : message);
+    }
 
     @Override
     protected PrinterDiscoverySession onCreatePrinterDiscoverySession() {
@@ -65,10 +83,14 @@ public final class JongersAndroidPrintService extends android.printservice.Print
         private void reload() {
             if (isDestroyed()) return;
             List<PrinterInfo> printers = new ArrayList<>();
-            for (String id : PrinterConnections.discover(JongersAndroidPrintService.this)) {
-                printers.add(describePrinter(id));
-            }
-            if (!printers.isEmpty()) addPrinters(printers);
+            try {
+                for (String id : PrinterConnections.discover(JongersAndroidPrintService.this)) {
+                    try { printers.add(describePrinter(id)); }
+                    catch (Throwable badPrinter) { note("Configuracion incompatible: " + explain(badPrinter)); }
+                }
+                if (!printers.isEmpty()) addPrinters(printers);
+                else note("No hay impresoras configuradas. Abre Jonger's Print Libre para seleccionar una.");
+            } catch (Throwable failure) { note("Descubrimiento: " + explain(failure)); }
         }
         @Override public void onStartPrinterDiscovery(List<PrinterId> priorityList) { reload(); }
         @Override public void onStopPrinterDiscovery() { }
@@ -80,46 +102,69 @@ public final class JongersAndroidPrintService extends android.printservice.Print
 
     @Override
     protected void onPrintJobQueued(PrintJob job) {
-        if (!job.isQueued() || !job.start()) return;
-        String jobId = job.getId().toString();
-        AtomicBoolean cancel = new AtomicBoolean(false);
-        cancelled.put(jobId, cancel);
-        queue.execute(() -> {
-            String error = null;
-            try {
-                if (cancel.get()) throw new IOException("Impresión cancelada");
-                String printer = job.getInfo().getPrinterId().getLocalId();
-                if (!PrinterConnections.discover(this).contains(printer))
-                    throw new IOException("Impresora no disponible. Configúrala en Jonger's Print Libre.");
-                int dots = SecureStore.publicPrefs(this).getInt("paper_width_dots", 384);
-                if (dots != 384 && dots != 576) dots = 384;
-                byte[] escpos = pdfToEscPos(job.getDocument().getData(), dots, cancel);
-                if (cancel.get()) throw new IOException("Impresión cancelada");
-                PrinterConnections.print(this, printer, escpos);
-                long count = SecureStore.publicPrefs(this).getLong("system_print_count", 0L);
-                SecureStore.publicPrefs(this).edit().putLong("system_print_count", count + 1).apply();
-            } catch (Exception e) {
-                error = e.getMessage() == null ? "Error de impresora" : e.getMessage();
-            }
-            final String result = error;
-            main.post(() -> {
-                cancelled.remove(jobId);
-                if (cancel.get()) {
-                    if (!job.isCancelled()) job.cancel();
-                } else if (result == null) {
-                    job.complete();
-                } else {
-                    job.fail(result);
+        try {
+            if (job == null || !job.isQueued() || !job.start()) return;
+            String jobId = job.getId().toString();
+            AtomicBoolean cancel = new AtomicBoolean(false);
+            cancelled.put(jobId, cancel);
+            note("Trabajo recibido de Android: " + jobId);
+            queue.execute(() -> {
+                String error = null;
+                try {
+                    if (cancel.get()) throw new IOException("Impresion cancelada");
+                    if (job.getInfo() == null || job.getInfo().getPrinterId() == null)
+                        throw new IOException("Android no indico la impresora de destino");
+                    String printer = job.getInfo().getPrinterId().getLocalId();
+                    if (!PrinterConnections.discover(this).contains(printer))
+                        throw new IOException("Impresora no disponible: " + printer
+                            + ". Abre Jonger's Print Libre y realiza una prueba.");
+                    int dots = SecureStore.publicPrefs(this).getInt("paper_width_dots", 384);
+                    if (dots != 384 && dots != 576) dots = 384;
+                    if (job.getDocument() == null)
+                        throw new IOException("Android no entrego el documento");
+                    byte[] escpos = pdfToEscPos(job.getDocument().getData(), dots, cancel);
+                    if (cancel.get()) throw new IOException("Impresion cancelada");
+                    PrinterConnections.print(this, printer, escpos);
+                    long count = SecureStore.publicPrefs(this).getLong("system_print_count", 0L);
+                    SecureStore.publicPrefs(this).edit().putLong("system_print_count", count + 1).apply();
+                    note("Ticket transmitido a " + printer + ". Confirma la salida del papel.");
+                } catch (Throwable e) {
+                    error = explain(e);
+                    note("Error al imprimir: " + error);
+                }
+                final String result = error;
+                try {
+                    main.post(() -> {
+                        cancelled.remove(jobId);
+                        try {
+                            if (cancel.get()) {
+                                if (!job.isCancelled()) job.cancel();
+                            } else if (result == null) {
+                                job.complete();
+                            } else {
+                                job.fail(result);
+                            }
+                        } catch (Throwable finishError) {
+                            note("Error de finalizacion: " + explain(finishError));
+                        }
+                    });
+                } catch (Throwable completionError) {
+                    note("Error al responder a Android: " + explain(completionError));
                 }
             });
-        });
+        } catch (Throwable startupError) {
+            note("Error al aceptar documento: " + explain(startupError));
+            try { job.fail(explain(startupError)); } catch (Throwable ignored) { }
+        }
     }
 
     @Override
     protected void onRequestCancelPrintJob(PrintJob job) {
-        AtomicBoolean state = cancelled.get(job.getId().toString());
-        if (state != null) state.set(true);
-        job.cancel();
+        try {
+            AtomicBoolean state = cancelled.get(job.getId().toString());
+            if (state != null) state.set(true);
+            job.cancel();
+        } catch (Throwable failure) { note("Error al cancelar: " + explain(failure)); }
     }
 
     /**
@@ -131,7 +176,27 @@ public final class JongersAndroidPrintService extends android.printservice.Print
         if (fd == null) throw new IOException("El documento no tiene contenido PDF");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(new byte[]{0x1b, 0x40, 0x1b, 0x61, 0x00});
-        try (PdfRenderer pdf = new PdfRenderer(fd)) {
+        // Android puede proporcionar un descriptor secuencial; PdfRenderer requiere
+        // uno que permita posicionarse. Copiamos el PDF a un archivo temporal privado.
+        File temp = File.createTempFile("jongers_receipt_", ".pdf", getCacheDir());
+        try {
+            try (InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(fd);
+                 OutputStream target = new FileOutputStream(temp)) {
+                byte[] block = new byte[8192];
+                long total = 0L;
+                int read;
+                while ((read = input.read(block)) != -1) {
+                    if (cancel.get()) throw new IOException("Cancelado");
+                    total += read;
+                    if (total > 8L * 1024L * 1024L)
+                        throw new IOException("PDF demasiado grande (maximo 8 MB)");
+                    target.write(block, 0, read);
+                }
+                if (total < 8L) throw new IOException("Android entrego un PDF vacio");
+            }
+            try (ParcelFileDescriptor localFile = ParcelFileDescriptor.open(
+                    temp, ParcelFileDescriptor.MODE_READ_ONLY);
+                 PdfRenderer pdf = new PdfRenderer(localFile)) {
             if (pdf.getPageCount() == 0) throw new IOException("Documento PDF vacío");
             if (pdf.getPageCount() > 40) throw new IOException("Documento excesivamente largo");
             for (int p = 0; p < pdf.getPageCount(); p++) {
@@ -162,6 +227,9 @@ public final class JongersAndroidPrintService extends android.printservice.Print
                 }
                 out.write(new byte[]{0x1b, 0x64, 0x02});
             }
+        }
+        } finally {
+            if (!temp.delete()) temp.deleteOnExit();
         }
         out.write(new byte[]{0x1d, 0x56, 0x00});
         return out.toByteArray();

@@ -80,6 +80,12 @@ public final class MainActivity extends Activity {
         detail(local,"Desde la pantalla de impresion elige Jonger's Print Libre. Android puede pedir confirmar cada ticket. Las comandas remotas automaticas son un modo separado.");
         long printed=SecureStore.publicPrefs(this).getLong("system_print_count",0L);
         label(local,"Tickets por Android enviados: "+printed+" · Sin cobro ni caducidad",14,YELLOW,true);
+        String log = SecureStore.publicPrefs(this).getString("last_print_diagnostic","Sin trabajos recibidos");
+        long when = SecureStore.publicPrefs(this).getLong("last_print_diagnostic_at",0);
+        String lastCrash = SecureStore.publicPrefs(this).getString("last_print_crash","");
+        detail(local,"DIAGNOSTICO: "+log+(when>0?"\nRegistrado: "+android.text.format.DateFormat.format("dd/MM HH:mm:ss",when):""));
+        if(!lastCrash.isEmpty())detail(local,"ULTIMO CIERRE: "+lastCrash);
+        button(local,"ACTUALIZAR DIAGNOSTICO",this::showSteps);
         boolean ready=paired();
         LinearLayout intro=card();
         stepTitle(intro,ready?"FUEGOPOS REMOTO · VINCULADO":"2  ·  ENLACE REMOTO FUEGOPOS (OPCIONAL)");
