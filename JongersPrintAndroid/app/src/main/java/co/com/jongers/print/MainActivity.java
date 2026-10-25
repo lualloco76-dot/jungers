@@ -151,6 +151,23 @@ public final class MainActivity extends Activity {
                 toast("Servicio activado. Configura Cocina en el panel web.");refresh();
             }catch(Exception e){message("No se puede iniciar",e.getMessage());}
         });
+        button(auto,"COMPROBAR CONEXION AUTENTICADA",()->{
+            if(!paired()){message("Equipo sin vincular","Usa primero el código de un solo uso.");return;}
+            new Thread(()->{
+                try{
+                    String msg=PrintService.checkConnection(this);
+                    runOnUiThread(()->{message("Servidor confirmado",msg);refresh();});
+                }catch(Exception e){
+                    runOnUiThread(()->{message("Problema de conexión",e.getMessage());refresh();});
+                }
+            },"jongers-check-server").start();
+        });
+        button(auto,"CONFIGURAR BATERIA / PERMISOS DEL ANDROID",()->{
+            Intent i=new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:"+getPackageName()));
+            try{startActivity(i);}catch(Exception e){message("Ajustes del sistema",e.getMessage());}
+        });
+        detail(auto,"En Ajustes de esta app permite ejecución en segundo plano, sin restricciones de batería y autoinicio si el fabricante ofrece esa opción.");
         button(auto,"Actualizar estado",this::refresh);
         status=label(auto,"Verificando estado del servicio...",13,Color.WHITE,false);
         detail(auto,"En FuegoPOS > Equipos e impresoras, elige la impresora detectada para Cocina y para el recibo. Si solo hay una, se podra usar en ambos.");
@@ -268,7 +285,16 @@ public final class MainActivity extends Activity {
         if(status!=null){
             long seen=SecureStore.publicPrefs(this).getLong("last_seen_at",0);
             String last=SecureStore.publicPrefs(this).getString("last_status","Pulsa ACTIVAR IMPRESION AUTOMATICA.");
-            status.setText(last+(seen>0?"\nUltima actividad: "+android.text.format.DateFormat.format("HH:mm:ss",seen):""));
+            android.content.SharedPreferences p=SecureStore.publicPrefs(this);
+            long remote=p.getLong("last_server_ok_at",0L);
+            boolean online=p.getBoolean("remote_connected",false);
+            String problem=p.getString("last_remote_error","");
+            String link=online?"SERVIDOR CONFIRMADO":"SERVIDOR NO CONFIRMADO";
+            if(remote>0)link+="\nÚltima comunicación correcta: "+
+                android.text.format.DateFormat.format("dd/MM HH:mm:ss",remote);
+            if(!online&&!problem.isEmpty())link+="\nMotivo: "+problem;
+            status.setText(link+"\n"+last+
+                (seen>0?"\nÚltima actividad local: "+android.text.format.DateFormat.format("HH:mm:ss",seen):""));
         }
         if(devices!=null){
             List<String> list=PrinterConnections.discover(this);
