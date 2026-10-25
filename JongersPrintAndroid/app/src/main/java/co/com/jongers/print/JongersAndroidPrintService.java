@@ -171,7 +171,7 @@ public final class JongersAndroidPrintService extends android.printservice.Print
      * Renderiza PDF con memoria acotada, a lo ancho real de los cabezales ESC/POS.
      * Rollo 58 mm: 384 puntos. Rollo 80 mm: 576 puntos.
      */
-    private static byte[] pdfToEscPos(ParcelFileDescriptor fd, int dots, AtomicBoolean cancel)
+    private byte[] pdfToEscPos(ParcelFileDescriptor fd, int dots, AtomicBoolean cancel)
         throws Exception {
         if (fd == null) throw new IOException("El documento no tiene contenido PDF");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
