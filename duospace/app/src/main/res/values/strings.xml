@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">DuoSpace Lite</string>
+    <string name="admin_explanation">DuoSpace administra únicamente su perfil de trabajo para instalar copias independientes de aplicaciones. No administra el perfil personal. Borrar el perfil de trabajo borrará los datos de las aplicaciones duplicadas.</string>
+</resources>
