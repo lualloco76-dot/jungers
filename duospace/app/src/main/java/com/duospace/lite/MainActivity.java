@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -40,7 +41,7 @@ public final class MainActivity extends Activity {
         if (work) ProfileAdminReceiver.finishSetup(this);
         buildView();
     }
-    @Override protected void onResume() { super.onResume(); if(content!=null) renderApps(""); }
+    @Override protected void onResume() { super.onResume(); if(content!=null) { loadApps(); renderApps(""); } }
 
     private void buildView() {
         ScrollView scroll = new ScrollView(this);
