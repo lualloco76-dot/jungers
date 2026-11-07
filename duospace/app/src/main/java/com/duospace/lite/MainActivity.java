@@ -72,6 +72,10 @@ public final class MainActivity extends Activity {
             panel.addView(show,Design.lp(this,-1,48,10));
             show.setBackground(Design.shape(0xFF354367,Design.dp(this,14)));
             show.setOnClickListener(v -> openSpace());
+            Button diagnostic=Design.button(this,"Diagnóstico de compatibilidad");
+            diagnostic.setBackground(Design.shape(0xFF354367,Design.dp(this,14)));
+            panel.addView(diagnostic,Design.lp(this,-1,44,10));
+            diagnostic.setOnClickListener(v -> diagnostic());
         } else {
             panel.addView(Design.copy(this,"Importante: si eliminas el perfil de trabajo, también eliminas sus cuentas y datos.",12),Design.lp(this,-1,-2,10));
         }
@@ -134,6 +138,19 @@ public final class MainActivity extends Activity {
         }
         if(count==0) content.addView(Design.copy(this,"No hay aplicaciones que coincidan con la búsqueda.",14),Design.lp(this,-1,-2,12));
     }
+    private void diagnostic() {
+        DevicePolicyManager dpm=getSystemService(DevicePolicyManager.class);
+        boolean compatible=getPackageManager().hasSystemFeature(PackageManager.FEATURE_MANAGED_USERS);
+        boolean available=dpm!=null && dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
+        android.os.UserManager um=getSystemService(android.os.UserManager.class);
+        int profiles=um==null ? 0 : um.getUserProfiles().size();
+        message("Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")" +
+                "\nCompatible con perfiles: " + (compatible ? "Sí" : "No") +
+                "\nPermite crear perfil: " + (available ? "Sí" : "No") +
+                "\nPerfiles visibles: " + profiles +
+                "\nSi ya creaste un perfil y Android no permite otro, no lo borres: " +
+                "podrías perder las cuentas y los datos de tus copias.");
+    }
     private void provision() {
         DevicePolicyManager dpm=getSystemService(DevicePolicyManager.class);
         if(dpm==null || !getPackageManager().hasSystemFeature(PackageManager.FEATURE_MANAGED_USERS)) {
@@ -150,8 +167,15 @@ public final class MainActivity extends Activity {
                     i.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME,
                             ProfileAdminReceiver.admin(this));
                     if(Build.VERSION.SDK_INT>=33) i.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_ALLOW_OFFLINE,true);
-                    try {startActivity(i);} catch (RuntimeException e){message("Android rechazó la configuración: "+e.getMessage());}
+                    try {startActivityForResult(i, 552);} catch (RuntimeException e){message("Android rechazó la configuración: "+e.getMessage());}
                 }).show();
+    }
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode,resultCode,data);
+        if (requestCode==552 && resultCode==RESULT_CANCELED) {
+            message("Android canceló o rechazó la creación del perfil. " +
+                    "Pulsa Diagnóstico de compatibilidad para comprobar el estado.");
+        }
     }
     private void cloneApp(AppEntry app) {
         try {

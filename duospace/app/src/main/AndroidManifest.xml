@@ -28,6 +28,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <activity android:name=".InstallProgressActivity" android:exported="false" android:launchMode="singleTop" android:configChanges="orientation|screenSize" />
         <activity android:name=".InstallStatusActivity" android:exported="false" android:launchMode="singleTop" />
         <activity android:name=".ProvisioningActivity" android:exported="true">
             <intent-filter>

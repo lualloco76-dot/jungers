@@ -12,10 +12,16 @@ public final class ProvisioningActivity extends Activity {
         super.onCreate(state);
         String action = getIntent().getAction();
         if (DevicePolicyManager.ACTION_GET_PROVISIONING_MODE.equals(action)) {
-            Intent result = new Intent();
-            result.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_MODE,
-                    DevicePolicyManager.PROVISIONING_MODE_MANAGED_PROFILE);
-            setResult(RESULT_OK,result);
+            java.util.ArrayList<Integer> allowed = getIntent().getIntegerArrayListExtra(
+                    DevicePolicyManager.EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES);
+            if (allowed == null || allowed.contains(DevicePolicyManager.PROVISIONING_MODE_MANAGED_PROFILE)) {
+                Intent result = new Intent();
+                result.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_MODE,
+                        DevicePolicyManager.PROVISIONING_MODE_MANAGED_PROFILE);
+                setResult(RESULT_OK, result);
+            } else {
+                setResult(RESULT_CANCELED);
+            }
         } else {
             if (DevicePolicyManager.ACTION_PROVISIONING_SUCCESSFUL.equals(action) ||
                     DevicePolicyManager.ACTION_ADMIN_POLICY_COMPLIANCE.equals(action)) {

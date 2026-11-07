@@ -29,10 +29,6 @@ public final class ProfileAdminReceiver extends DeviceAdminReceiver {
             filter.addCategory(Intent.CATEGORY_DEFAULT);
             dpm.addCrossProfileIntentFilter(admin, filter,
                     DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED);
-            if (Build.VERSION.SDK_INT >= 30) {
-                dpm.setCrossProfilePackages(admin,
-                        Collections.singleton(context.getPackageName()));
-            }
             context.getPackageManager().setComponentEnabledSetting(
                     new ComponentName(context, BridgeActivity.class),
                     PackageManager.COMPONENT_ENABLED_STATE_ENABLED,

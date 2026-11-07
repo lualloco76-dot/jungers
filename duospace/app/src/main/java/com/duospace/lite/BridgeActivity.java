@@ -76,15 +76,16 @@ public final class BridgeActivity extends Activity {
         if(attempted) return;
         attempted=true;
         try {
-            ApkInstall.install(this,packageName,sources);
-            Toast.makeText(this,"Preparando instalación de "+label,Toast.LENGTH_LONG).show();
+            Intent install = new Intent(this, InstallProgressActivity.class);
+            install.putExtra(EXTRA_PACKAGE, packageName);
+            install.putExtra(EXTRA_LABEL, label);
+            install.setClipData(sources);
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(install);
             finish();
-        } catch(Exception e){
+        } catch(RuntimeException e) {
             attempted=false;
-            new AlertDialog.Builder(this).setTitle("No se pudo duplicar")
-                    .setMessage("Android no pudo leer o instalar todos los APK de "+label+". Detalle: "+e.getMessage())
-                    .setPositiveButton("Abrir Play Store",(d,w)->openStore())
-                    .setNegativeButton("Cerrar",(d,w)->finish()).show();
+            error("Android no pudo abrir el instalador: " + e.getMessage());
         }
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){

@@ -1,6 +1,16 @@
-# DuoSpace Lite — beta Android
+# DuoSpace Lite — beta Android 0.2.0
 
 **Proyecto independiente**, escrito en Java, sin SDK de terceros, anuncios ni servicios permanentes en segundo plano.
+
+## Cambios 0.2.0
+
+- La copia de APKs ahora ocurre en un hilo de trabajo y muestra MB y porcentaje en pantalla.
+- La app permanece visible mientras espera el permiso de instalación.
+- El usuario pulsa **Continuar instalación** para abrir el diálogo de Android; evita intentos de lanzamiento automático desde segundo plano.
+- Se incorpora diagnóstico de soporte y disponibilidad de perfiles.
+- El instalador ofrece una ruta de comprobación y Play Store si se atasca.
+
+**Aviso de actualización:** los APK `debug` de GitHub Actions pueden usar firmas distintas entre ejecuciones. No intentes reemplazar un administrador de perfil instalado sin comprobar la firma: si creó tu perfil de trabajo, desinstalarlo o borrar el perfil puede eliminar las copias y sus datos. Esta beta se orienta a primeras instalaciones en dispositivos de prueba.
 
 ## Funcionalidad implementada
 
