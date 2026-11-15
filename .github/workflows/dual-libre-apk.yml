@@ -1,0 +1,81 @@
+name: Dual Libre - Construir APK Android
+on:
+  push:
+    branches: [dual-libre-apk]
+permissions:
+  contents: read
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Obtener motor libre sin perfiles de trabajo
+        shell: bash
+        run: |
+          git clone https://github.com/williamstengg01-svg/DUAL-SPACE-APPS.git DualLibre
+          cd DualLibre
+          git checkout --detach 451ce0f2317a03ba4c515cf31d0af61136a6812e
+
+      - name: Personalizar el nombre Dual Libre
+        shell: bash
+        run: |
+          cd DualLibre
+          sed -i 's/resValue "string", "app_name", "Dual Space"/resValue "string", "app_name", "Dual Libre"/g' app/build.gradle
+          sed -i 's/resValue "string", "app_name", "Dual Space 32-bit"/resValue "string", "app_name", "Dual Libre 32-bit"/g' app/build.gradle
+          grep 'app_name' app/build.gradle
+
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK y NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+            ndk;29.0.13846066
+
+      - name: Crear firma de instalacion
+        shell: bash
+        run: |
+          cd DualLibre
+          mkdir -p keystore
+          keytool -genkeypair -v -storetype PKCS12 -keystore keystore/dual-libre.jks -alias duallibre -keyalg RSA -keysize 2048 -validity 10000 -storepass duallibre -keypass duallibre -dname "CN=Dual Libre, O=Personal, C=CO"
+          cat > keystore/keystore.properties <<'EOF'
+          storeFile=dual-libre.jks
+          storeType=PKCS12
+          storePassword=duallibre
+          keyAlias=duallibre
+          keyPassword=duallibre
+          EOF
+
+      - name: Compilar APK de Android 64 bits
+        shell: bash
+        run: |
+          cd DualLibre
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleArm64Release
+
+      - name: Comprobar publicidad
+        shell: bash
+        run: |
+          cd DualLibre
+          ./gradlew --no-daemon :app:dependencies --configuration arm64ReleaseRuntimeClasspath > deps.txt
+          if grep -iE 'admob|play-services-ads|unity3d.ads|applovin|audience-network|ironsource|vungle|chartboost|inmobi|mopub|tapjoy|firebase-analytics|appsflyer|adjust' deps.txt; then
+            echo "Advertising or tracking SDK found"
+            exit 1
+          fi
+
+      - name: Publicar APK instalable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dual-Libre-APK
+          path: |
+            DualLibre/app/build/outputs/apk/arm64/release/*.apk
+            DualLibre/LICENSE
+            DualLibre/LICENSE-BlackBox
+          if-no-files-found: error
