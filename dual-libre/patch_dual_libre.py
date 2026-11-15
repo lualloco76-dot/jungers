@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import re
 
-root = Path(__file__).resolve().parents[2] / "DualLibre"
+root = Path(__file__).resolve().parents[1] / "DualLibre"
 assets = Path(__file__).resolve().parent
 assert (root / "app/build.gradle").is_file(), "Clone of upstream Android project missing"
 app = root / "app"
