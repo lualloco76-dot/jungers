@@ -167,3 +167,88 @@ patch("src/main/res/layout/item_clone.xml",
       'android:padding="8dp">',
       'android:padding="16dp">')
 print("Dual Libre PRO 2.0: six languages, native selector, graphite-purple UI, distinct package ID")
+
+
+# Experimental Android 15 fixes. Keep current installation untouched:
+# separate application ID avoids installing over an app signed with a lost CI key.
+patch("build.gradle", 'applicationId "com.duallibre.pro"', 'applicationId "com.duallibre.notificationstest"')
+patch("build.gradle", 'versionCode 20', 'versionCode 21')
+patch("build.gradle", 'versionName "2.0.0"', 'versionName "2.0.1-test"')
+
+# On Android 13+, the host application needs the notification runtime permission.
+# Android controls showing the dialog on targetSdk 28 when first channel is created.
+patch("src/main/AndroidManifest.xml", 
+      '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+      '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+      '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />')
+
+patch("src/main/java/com/dualspace/clone/ui/MainActivity.kt",
+      'import android.app.Activity',
+      'import android.app.Activity\nimport android.app.NotificationChannel\nimport android.app.NotificationManager\nimport android.os.Build')
+patch("src/main/java/com/dualspace/clone/ui/MainActivity.kt",
+      '        super.onCreate(savedInstanceState)\n        b = ActivityMainBinding.inflate(layoutInflater)',
+      '''        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(NotificationChannel(
+                "dual_libre_clones",
+                "Notificaciones de aplicaciones duplicadas",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ))
+        }
+        b = ActivityMainBinding.inflate(layoutInflater)''')
+
+engine_root = root / "Bcore/src/main/java/top/niunaijun/blackbox/fake/service"
+appops = engine_root / "IAppOpsManagerProxy.java"
+appops_source = appops.read_text(encoding="utf-8")
+find = '''        String methodName = method.getName();'''
+assert appops_source.count(find) == 1
+replace = '''        // Android 15 IAppOpsService.noteOperation/startOperation returns
+        // SyncNotedAppOp, not an Integer. Returning MODE_ALLOWED used to crash
+        // WhatsApp in Environment.isExternalStorageLegacy on API 35.
+        // Delegate typed operations to the real OS with the *host* package/UID
+        // so Android performs normal permission enforcement.
+        if ("android.app.SyncNotedAppOp".equals(method.getReturnType().getName())) {
+            Object[] normal = args == null ? null : args.clone();
+            MethodParameterUtils.replaceAllAppPkgCached(normal);
+            if (normal != null) {
+                for (int i = 0; i < normal.length; i++) {
+                    if (normal[i] instanceof Integer
+                            && ((Integer) normal[i]) == BlackBoxCore.getBUid()) {
+                        normal[i] = BlackBoxCore.getHostUid();
+                    }
+                }
+            }
+            try {
+                return method.invoke(getBase(), normal);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                throw e.getCause();
+            }
+        }
+
+        String methodName = method.getName();'''
+appops.write_text(appops_source.replace(find, replace), encoding="utf-8")
+
+# Android 14/15 IJobScheduler binder schedules via schedule(String namespace, JobInfo).
+# Old code wrongly assumed args[0] was always JobInfo and sent an unmodified
+# WhatsApp JobInfo to system JobScheduler, which rejected com.whatsapp for host UID.
+job = engine_root / "IJobServiceProxy.java"
+job_source = job.read_text(encoding="utf-8")
+fixes = (
+    ('if (!(args[0] instanceof JobInfo)) {',
+     '''int jobIndex = args[0] instanceof JobInfo ? 0
+                        : (args.length > 1 && args[1] instanceof JobInfo ? 1 : -1);
+                if (jobIndex < 0) {'''),
+    ('JobInfo jobInfo = (JobInfo) args[0];',
+     'JobInfo jobInfo = (JobInfo) args[jobIndex];'),
+    ('args[0] = proxyJobInfo;',
+     'args[jobIndex] = proxyJobInfo;'),
+    ('if (proxyJobInfo != null) {',
+     '''if (proxyJobInfo != null
+                            && BlackBoxCore.getHostPkg().equals(proxyJobInfo.getService().getPackageName())) {''')
+)
+for before, after in fixes:
+    assert job_source.count(before) == 2, (before, job_source.count(before))
+    job_source = job_source.replace(before, after)
+job.write_text(job_source, encoding="utf-8")
+print("Experimental notification fixes: typed AppOps, namespaced JobScheduler, POST_NOTIFICATIONS permission")
