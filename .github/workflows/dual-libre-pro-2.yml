@@ -1,0 +1,123 @@
+name: Dual Libre PRO 2.0 - APK multilingue
+on:
+  push:
+    branches:
+      - dual-libre-pro-2
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Traer mejoras e idiomas
+        uses: actions/checkout@v4
+
+      - name: Descargar motor de virtualizacion libre
+        shell: bash
+        run: |
+          git clone https://github.com/williamstengg01-svg/DUAL-SPACE-APPS.git DualLibre
+          cd DualLibre
+          git checkout --detach 451ce0f2317a03ba4c515cf31d0af61136a6812e
+
+      - name: Aplicar idioma y diseño premium
+        shell: bash
+        run: |
+          python3 dual-libre/patch_dual_libre.py
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          import re
+          root = Path("DualLibre/app/src/main/res")
+          base = ET.parse(root/"values/strings.xml").getroot()
+          baseline = {x.attrib["name"]:x.text or "" for x in base if x.tag=="string"}
+          pt = re.compile(r'%(?:[0-9]+\$)?[ds]')
+          for locale in ("es","pt","fr"):
+              loc = ET.parse(root/f"values-{locale}/strings.xml").getroot()
+              localized = {x.attrib["name"]:x.text or "" for x in loc if x.tag=="string"}
+              missing = sorted(set(baseline)-set(localized))
+              assert not missing, f"Missing translations for {locale}: {missing}"
+              for key in baseline:
+                  a = sorted(pt.findall(baseline[key]))
+                  b = sorted(pt.findall(localized[key]))
+                  assert a==b,(locale,key,a,b)
+              print(f"{locale}: {len(localized)} strings and placeholders verified")
+          PY
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configurar Android SDK y NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+            ndk;29.0.13846066
+
+      - name: Crear firma de esta compilacion
+        shell: bash
+        env:
+          DL_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          DL_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          DL_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          DL_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd DualLibre
+          mkdir -p keystore
+          if [ -n "$DL_KEYSTORE_BASE64" ]; then
+            echo "$DL_KEYSTORE_BASE64" | base64 -d > keystore/duallibre-pro.jks
+            cat > keystore/keystore.properties <<EOF
+          storeFile=duallibre-pro.jks
+          storeType=PKCS12
+          storePassword=$DL_KEYSTORE_PASSWORD
+          keyAlias=$DL_KEY_ALIAS
+          keyPassword=$DL_KEY_PASSWORD
+          EOF
+          else
+            keytool -genkeypair -v -storetype PKCS12 -keystore keystore/duallibre-pro.jks \
+              -alias duallibrepro -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass duallibrepro -keypass duallibrepro \
+              -dname "CN=Dual Libre PRO, O=Personal, C=CO"
+            cat > keystore/keystore.properties <<'EOF'
+          storeFile=duallibre-pro.jks
+          storeType=PKCS12
+          storePassword=duallibrepro
+          keyAlias=duallibrepro
+          keyPassword=duallibrepro
+          EOF
+            echo "::warning::Temporary signature: a permanent keystore secret is needed for updates preserving app data"
+          fi
+
+      - name: Compilar APK Android 64 bits
+        shell: bash
+        run: |
+          cd DualLibre
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleArm64Release
+
+      - name: Verificar ausencia de SDKs publicitarios
+        shell: bash
+        run: |
+          cd DualLibre
+          ./gradlew --no-daemon :app:dependencies --configuration arm64ReleaseRuntimeClasspath > deps.txt
+          if grep -iE 'admob|play-services-ads|unity3d.ads|applovin|audience-network|ironsource|vungle|chartboost|inmobi|mopub|tapjoy|firebase-analytics|appsflyer|adjust' deps.txt; then
+            echo "::error::Advertising or tracking SDK detected"; exit 1
+          fi
+          echo "PASS: no ad or analytics SDK found"
+
+      - name: Publicar aplicacion instalable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dual-Libre-PRO-2.0-Multilingue
+          path: |
+            DualLibre/app/build/outputs/apk/arm64/release/*.apk
+            DualLibre/LICENSE
+            DualLibre/LICENSE-BlackBox
+          if-no-files-found: error
